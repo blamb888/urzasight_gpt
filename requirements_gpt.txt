@@ -1,0 +1,10 @@
+fastapi
+uvicorn[standard]
+pillow
+opencv-python
+pytesseract
+pykakasi
+fugashi
+unidic-lite
+pyttsx3
+python-multipart

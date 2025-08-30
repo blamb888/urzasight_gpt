@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>urzasight_gpt – Always-On</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<style>
+  :root { --ui: #0ea5e9; }
+  body { font-family: system-ui, sans-serif; margin: 14px; }
+  h1 { margin: 0 0 8px; }
+  .row { margin: 10px 0; }
+  #previewWrap { position: relative; max-width: 92vw; }
+  #video { width: 100%; border-radius: 10px; border: 1px solid #ddd; }
+  #freeze { display:none; max-width: 92vw; border: 1px solid #ddd; border-radius: 10px; }
+  #stage { position: relative; display: inline-block; }
+  #box { position:absolute; border:2px solid var(--ui); background: rgba(14,165,233,0.12); display:none; }
+  button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ddd; }
+  button.primary { border-color: var(--ui); }
+  .mono { font-family: ui-monospace, Menlo, monospace; white-space: pre-wrap; }
+  .pill { display:inline-block; padding:4px 8px; border-radius:999px; border:1px solid #ddd; }
+</style>
+</head>
+<body>
+  <h1>urzasight_gpt 📖</h1>
+  <div class="row">
+    <span class="pill">Say: “Urzasight help”</span>
+    <label class="pill"><input type="checkbox" id="vertical" checked> Vertical</label>
+    <span class="pill">Hold mic: press & hold 🎙️</span>
+  </div>
+
+  <div id="previewWrap">
+    <video id="video" autoplay playsinline muted></video>
+  </div>
+
+  <div class="row">
+    <button id="askBtn" class="primary">Ask urzasight_gpt</button>
+    <button id="recaptureBtn" style="display:none;">Recapture</button>
+    <button id="speakBtn">Speak Reply</button>
+  </div>
+
+  <div id="stage" style="display:none;">
+    <img id="freeze" alt="captured frame"/>
+    <div id="box"></div>
+  </div>
+
+  <div class="row mono" id="out"></div>
+
+<script>
+const video = document.getElementById('video');
+const askBtn = document.getElementById('askBtn');
+const recaptureBtn = document.getElementById('recaptureBtn');
+const speakBtn = document.getElementById('speakBtn');
+const vertical = document.getElementById('vertical');
+const stage = document.getElementById('stage');
+const freeze = document.getElementById('freeze');
+const box = document.getElementById('box');
+const out = document.getElementById('out');
+
+let dragging=false, sx=0, sy=0, ex=0, ey=0;
+let lastResult=null;
+
+// 1) Continuous camera preview
+(async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment" }, audio: false
+    });
+    video.srcObject = stream;
+  } catch (e) {
+    alert("Camera permission needed: " + e);
+  }
+})();
+
+// 2) Voice wake phrase (Web Speech API)
+let recog;
+if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+  const R = window.SpeechRecognition || window.webkitSpeechRecognition;
+  recog = new R();
+  recog.lang = 'en-US';
+  recog.continuous = true;
+  recog.interimResults = false;
+  recog.onresult = (ev) => {
+    const t = ev.results[ev.results.length-1][0].transcript.trim().toLowerCase();
+    if (t.includes('urzasight help') || t.includes("ursa sight help")) {
+      triggerCapture();
+    }
+  };
+  recog.onend = () => { try { recog.start(); } catch {} };
+  try { recog.start(); } catch {}
+}
+
+// 3) Hold-to-talk fallback (long press anywhere on page to capture)
+let holdTimer=null;
+document.body.addEventListener('touchstart', () => {
+  holdTimer = setTimeout(triggerCapture, 450);
+});
+document.body.addEventListener('touchend', () => {
+  clearTimeout(holdTimer);
+});
+
+// 4) Ask button
+askBtn.onclick = triggerCapture;
+
+async function triggerCapture(){
+  // Capture current frame to dataURL
+  const c = document.createElement('canvas');
+  c.width = video.videoWidth || 1280;
+  c.height = video.videoHeight || 720;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(video, 0, 0, c.width, c.height);
+  const dataURL = c.toDataURL('image/jpeg', 0.92);
+
+  // Show still + enable ROI
+  freeze.src = dataURL;
+  freeze.style.display = 'block';
+  stage.style.display = 'inline-block';
+  recaptureBtn.style.display = 'inline-block';
+  out.textContent = 'Tip: drag a box over the bubble/kanji, then tap “Ask urzasight_gpt” again.';
+  box.style.display = 'none';
+
+  // Rewire Ask to analyze selection
+  askBtn.onclick = () => analyze(dataURL);
+}
+
+// ROI drag on the still image
+freeze.onload = () => {
+  box.style.display = 'none';
+  dragging = false;
+};
+stage.addEventListener('mousedown', (e) => {
+  if (freeze.style.display === 'none') return;
+  dragging = true;
+  const r = freeze.getBoundingClientRect();
+  sx = e.clientX - r.left; sy = e.clientY - r.top;
+  Object.assign(box.style, {left: sx+'px', top: sy+'px', width: '0px', height: '0px', display:'block'});
+});
+stage.addEventListener('mousemove', (e) => {
+  if (!dragging) return;
+  const r = freeze.getBoundingClientRect();
+  ex = e.clientX - r.left; ey = e.clientY - r.top;
+  const x = Math.min(sx, ex), y = Math.min(sy, ey);
+  const w = Math.abs(ex - sx), h = Math.abs(ey - sy);
+  Object.assign(box.style, {left: x+'px', top: y+'px', width: w+'px', height: h+'px'});
+});
+window.addEventListener('mouseup', () => dragging=false);
+
+recaptureBtn.onclick = () => {
+  // Return ask button to capture mode
+  askBtn.onclick = triggerCapture;
+  out.textContent = 'Live preview ready. Say “Urzasight help” or tap Ask.';
+  stage.style.display = 'none';
+  freeze.style.display = 'none';
+  recaptureBtn.style.display = 'none';
+};
+
+async function analyze(dataURL){
+  // Map CSS box → image pixels
+  const r = freeze.getBoundingClientRect();
+  const scaleX = freeze.naturalWidth / r.width;
+  const scaleY = freeze.naturalHeight / r.height;
+  let x=0,y=0,w=0,h=0;
+  if (box.style.display !== 'none') {
+    const bx = parseInt(box.style.left), by = parseInt(box.style.top);
+    const bw = parseInt(box.style.width), bh = parseInt(box.style.height);
+    x = Math.round(bx * scaleX); y = Math.round(by * scaleY);
+    w = Math.round(bw * scaleX); h = Math.round(bh * scaleY);
+  }
+
+  const fd = new FormData();
+  fd.append('image_b64', dataURL);
+  fd.append('x', x); fd.append('y', y); fd.append('w', w); fd.append('h', h);
+  fd.append('vertical', document.getElementById('vertical').checked ? 1 : 0);
+  fd.append('speak_server', 0);
+
+  out.textContent = 'Analyzing…';
+  const res = await fetch('/capture_analyze', { method: 'POST', body: fd });
+  const data = await res.json();
+  lastResult = data;
+
+  out.textContent =
+    `Japanese: ${data.japanese || '(—)'}\n` +
+    `Reading (hiragana): ${data.readings?.hiragana || '(—)'}\n` +
+    `Translation: ${data.translation}`;
+  speakBrowser(`Okay! ${data.japanese ? 'Here is what I see.' : 'I didn’t catch text.'}`);
+}
+
+// 5) Voice out (browser TTS for instant feedback)
+function speakBrowser(text){
+  if (!('speechSynthesis' in window)) return;
+  const u = new SpeechSynthesisUtterance(text);
+  u.rate = 1.0;
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+speakBtn.onclick = () => {
+  const t = out.textContent.replace(/^Translation:\s*/m, '')
+  speechSynthesis.cancel();
+  speakBrowser(t || 'No translation yet. Ask me for an explanation.');
+};
+</script>
+</body>
+</html>

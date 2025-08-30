@@ -1,0 +1,112 @@
+from fastapi import FastAPI, UploadFile, File, Form
+from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+
+import os, io, base64
+from PIL import Image
+import pytesseract
+import cv2
+import numpy as np
+from pykakasi import kakasi
+import pyttsx3
+
+app = FastAPI(title="urzasight_gpt v2")
+
+# CORS (so you can open from phone over LAN)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_credentials=True,
+    allow_methods=["*"], allow_headers=["*"],
+)
+
+# Static dir (if we ever want to save images)
+os.makedirs("static", exist_ok=True)
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+# ------------ Helpers ------------
+def pil_to_cv2(pil_img: Image.Image):
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+def preprocess_for_ocr(cv_img):
+    # Grayscale + denoise + adaptive threshold — good for manga pages
+    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+    gray = cv2.medianBlur(gray, 3)
+    th = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
+                               cv2.THRESH_BINARY, 31, 5)
+    return th
+
+def ocr_japanese(pil_img, vert=False):
+    cv_img = pil_to_cv2(pil_img)
+    proc = preprocess_for_ocr(cv_img)
+    pil_proc = Image.fromarray(proc)
+    lang = "jpn_vert" if vert else "jpn"
+    # psm 6 = assume a block of text; tweak if needed
+    config = "--oem 1 --psm 6"
+    text = pytesseract.image_to_string(pil_proc, lang=lang, config=config)
+    return text.strip()
+
+def readings(text):
+    kks = kakasi()
+    kks.setMode("J", "H")  # Kanji -> Hiragana
+    kks.setMode("K", "H")  # Katakana -> Hiragana
+    conv = kks.getConverter()
+    hira = conv.do(text)
+    return {"hiragana": hira}
+
+def tts_say(text):
+    try:
+        engine = pyttsx3.init()
+        engine.setProperty("rate", 175)
+        engine.say(text)
+        engine.runAndWait()
+        return True
+    except Exception:
+        return False
+
+# ------------ Routes ------------
+@app.get("/", response_class=HTMLResponse)
+def index():
+    with open("index_gpt.html", "r", encoding="utf-8") as f:
+        return f.read()
+
+@app.post("/capture_analyze")
+async def capture_analyze(
+    image_b64: str = Form(...),
+    x: int = Form(0), y: int = Form(0),
+    w: int = Form(0), h: int = Form(0),
+    vertical: int = Form(1),
+    speak_server: int = Form(0),
+):
+    # Decode base64 image (dataURL from browser)
+    header, b64data = image_b64.split(",", 1) if "," in image_b64 else ("", image_b64)
+    img_bytes = base64.b64decode(b64data)
+    pil = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+
+    # Crop to ROI if provided
+    if w > 0 and h > 0:
+        pil = pil.crop((x, y, x + w, y + h))
+
+    jp = ocr_japanese(pil, vert=bool(vertical)).replace("\n", " ").strip()
+    pron = readings(jp)
+
+    if jp:
+        translation = "Ask me for a natural translation + grammar breakdown!"
+    else:
+        translation = "(No text detected — try a tighter box or toggle vertical.)"
+
+    result = {
+        "japanese": jp,
+        "readings": pron,
+        "translation": translation
+    }
+
+    if speak_server and jp:
+        tts_say(jp)
+
+    return JSONResponse(result)
+
+@app.post("/speak")
+async def speak(text: str = Form(...)):
+    ok = tts_say(text)
+    return {"spoken": ok}
