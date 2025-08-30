@@ -17,7 +17,7 @@ It combines a FastAPI backend with a lightweight HTML/JS frontend, enabling OCR 
 ---
 
 ## 📂 Project Structure
-```
+
 
 urzasight\_gpt/
 ├── app\_gpt.py          # FastAPI backend
@@ -25,8 +25,6 @@ urzasight\_gpt/
 ├── requirements\_gpt.txt# Python dependencies
 ├── static/             # assets (captures, scripts, etc.)
 └── .gitignore          # excludes venv, certs, caches
-
-````
 
 ---
 
