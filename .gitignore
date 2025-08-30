@@ -1,24 +1,12 @@
-# Python
 __pycache__/
 *.pyc
-*.pyo
-
-# Virtual envs
 .venv/
 venv/
-
-# Local certs/keys
+.env
+.env.*
 *.pem
 local.key
 local.crt
-
-# Env/secrets
-.env
-.env.*
-
-# Caches / logs
 .cache/
 *.log
-
-# App artifacts
 static/captures/
