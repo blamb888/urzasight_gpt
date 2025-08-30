@@ -1,5 +1,3 @@
-Got it 👍 — here’s the full README in a copy-paste friendly markdown block:
-
 ```markdown
 # urzasight_gpt 📖🤖
 
