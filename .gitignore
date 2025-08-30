@@ -3,24 +3,20 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Virtual env
+# Virtual envs
 .venv/
 venv/
 
-# Editor/OS
-.DS_Store
-*.swp
-
 # Local certs/keys
+*.pem
 local.key
 local.crt
-*.pem
 
-# Environment / secrets
+# Env/secrets
 .env
 .env.*
 
-# Caches / downloads
+# Caches / logs
 .cache/
 *.log
 
