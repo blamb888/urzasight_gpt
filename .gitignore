@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual env
+.venv/
+venv/
+
+# Editor/OS
+.DS_Store
+*.swp
+
+# Local certs/keys
+local.key
+local.crt
+*.pem
+
+# Environment / secrets
+.env
+.env.*
+
+# Caches / downloads
+.cache/
+*.log
+
+# App artifacts
+static/captures/
