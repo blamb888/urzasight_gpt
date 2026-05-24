@@ -7,8 +7,6 @@ import argparse
 from datetime import datetime
 from pathlib import Path
 
-import cv2
-
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -17,6 +15,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--device", default="/dev/video0", help="Camera device path.")
     parser.add_argument("--width", type=int, default=1280, help="Requested frame width.")
     parser.add_argument("--height", type=int, default=720, help="Requested frame height.")
+    parser.add_argument(
+        "--format",
+        default="MJPG",
+        help="Requested fourcc pixel format, for example MJPG or YUYV.",
+    )
+    parser.add_argument(
+        "--warmup-frames",
+        type=int,
+        default=5,
+        help="Frames to discard before saving the still image.",
+    )
     parser.add_argument(
         "--output-dir", default="captures", help="Directory for captured images."
     )
@@ -35,6 +44,14 @@ def device_index(device: str) -> int | str:
 
 def main() -> int:
     args = parse_args()
+    try:
+        import cv2
+    except ImportError as exc:
+        raise SystemExit(
+            "Missing Python package: opencv-python\n"
+            "Install it with: python3 -m pip install -r requirements_gpt.txt"
+        ) from exc
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -43,10 +60,19 @@ def main() -> int:
         print(f"Could not open camera device: {args.device}")
         return 1
 
+    if args.format:
+        fourcc = cv2.VideoWriter_fourcc(*args.format[:4].upper())
+        cap.set(cv2.CAP_PROP_FOURCC, fourcc)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
 
-    ok, frame = cap.read()
+    ok = False
+    frame = None
+    for _ in range(max(args.warmup_frames, 0) + 1):
+        ok, frame = cap.read()
+
+    actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     cap.release()
 
     if not ok or frame is None:
@@ -60,7 +86,9 @@ def main() -> int:
         print(f"Could not write capture: {output_path}")
         return 1
 
-    print(output_path)
+    print(f"Saved: {output_path}")
+    print(f"Requested: {args.width}x{args.height} {args.format.upper()}")
+    print(f"Actual: {actual_width}x{actual_height}")
     return 0
 
 
