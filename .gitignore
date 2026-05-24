@@ -1,12 +1,27 @@
+cat > .gitignore <<'EOF'
+# Python
 __pycache__/
 *.pyc
+*.pyo
+
+# Virtual environments
 .venv/
 venv/
+
+# Local HTTPS certs / secrets
+*.pem
+*.key
+*.crt
 .env
 .env.*
-*.pem
-local.key
-local.crt
-.cache/
+
+# Backups / local scratch
+*.bak
+*.backup
+*.tmp
 *.log
+
+# Local captures / generated files
 static/captures/
+captures/
+EOF
