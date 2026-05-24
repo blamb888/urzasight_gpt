@@ -84,11 +84,11 @@ For the Logitech C922 fallback prototype, use `/dev/video2` unless `scripts/list
 Current best baseline:
 
 - MJPG 1920x1080 at 30fps
-- `focus_absolute=60`
+- `focus_absolute=40`
 - `sharpness=180`
 - `power_line_frequency=1` for Tokyo/Japan East 50Hz lighting
 
-Focus values `40` and `60` were the best early candidates from the sweep, with `60` currently preferred.
+Focus values `40` and `60` were the best early candidates from the sweep, with `40` currently preferred and `60` kept as a backup.
 
 Apply repeatable manga-oriented camera settings:
 
@@ -109,3 +109,25 @@ bash scripts/c922_focus_sweep.sh /dev/video2
 ```
 
 See [docs/c922_camera_test_notes.md](docs/c922_camera_test_notes.md) for the full C922 testing procedure and manga capture tips.
+
+## MVP Snapshot Workflow
+
+The MVP camera flow uses a local preview as a viewfinder and captures one high-resolution still on command. Continuous AI video streaming is deferred.
+
+Start the interactive viewfinder:
+
+```bash
+python3 scripts/manga_snapshot_viewfinder.py --device /dev/video2
+```
+
+While the viewfinder is open, press Enter, Space, or `S` to save a snapshot without closing the feed. Press `Q` or Esc to quit.
+
+For non-interactive one-shot capture:
+
+```bash
+bash scripts/capture_manga_snapshot.sh /dev/video2
+```
+
+The saved image under `captures/` will later be sent to an AI vision API together with the user's question, then the response will be spoken aloud.
+
+See [docs/mvp_voice_snapshot_protocol.md](docs/mvp_voice_snapshot_protocol.md) for the protocol.

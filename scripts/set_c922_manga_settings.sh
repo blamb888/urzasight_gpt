@@ -17,7 +17,7 @@ fi
 
 echo "Applying C922 manga test settings to $DEVICE"
 v4l2-ctl -d "$DEVICE" --set-ctrl=focus_automatic_continuous=0
-v4l2-ctl -d "$DEVICE" --set-ctrl=focus_absolute=60
+v4l2-ctl -d "$DEVICE" --set-ctrl=focus_absolute=40
 v4l2-ctl -d "$DEVICE" --set-ctrl=sharpness=180
 v4l2-ctl -d "$DEVICE" --set-ctrl=power_line_frequency=1
 

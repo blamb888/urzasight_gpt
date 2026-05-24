@@ -45,13 +45,13 @@ Use the C922 tripod-mounted and forward-facing, with the reader holding the mang
 Current best baseline:
 
 ```text
-focus_absolute=60
+focus_absolute=40
 MJPG 1920x1080 @ 30fps
 sharpness=180
 power_line_frequency=1
 ```
 
-Use `power_line_frequency=1` for Tokyo/Japan East 50Hz lighting. Early focus sweep results made `40` and `60` the best candidates, with `60` currently preferred.
+Use `power_line_frequency=1` for Tokyo/Japan East 50Hz lighting. Early focus sweep results made `40` and `60` the best candidates, with `40` currently preferred and `60` kept as a backup.
 
 ## Manual Focus Procedure
 
@@ -82,7 +82,7 @@ Use `power_line_frequency=1` for Tokyo/Japan East 50Hz lighting. Early focus swe
    captures/c922_focus_160.jpg
    ```
 
-The current starting point disables continuous autofocus, sets manual focus to `60`, sharpness to `180`, and power-line frequency to `1` for 50Hz Tokyo/Japan East lighting.
+The current starting point disables continuous autofocus, sets manual focus to `40`, sharpness to `180`, and power-line frequency to `1` for 50Hz Tokyo/Japan East lighting.
 
 ## Manga Capture Tips
 
