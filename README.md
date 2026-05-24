@@ -131,3 +131,15 @@ bash scripts/capture_manga_snapshot.sh /dev/video2
 The saved image under `captures/` will later be sent to an AI vision API together with the user's question, then the response will be spoken aloud.
 
 See [docs/mvp_voice_snapshot_protocol.md](docs/mvp_voice_snapshot_protocol.md) for the protocol.
+
+## Realtime Voice + Snapshot MVP
+
+The first voice MVP uses AirPods or the current Ubuntu default audio devices, keeps the C922 preview local, listens for spoken trigger phrases, captures one still image, and asks the OpenAI Realtime model to answer aloud as Urzasight.
+
+```bash
+export OPENAI_API_KEY=...
+bash scripts/set_c922_manga_settings.sh /dev/video2
+python3 scripts/urzasight_realtime_snapshot.py
+```
+
+Say "Urzasight", "what does this mean", or "explain this" to trigger a fresh snapshot. Say "repeat" to hear the last answer again. The tutor prompt is editable at [prompts/urzasight_tutor.md](prompts/urzasight_tutor.md), and the architecture is documented in [docs/realtime_voice_snapshot_architecture.md](docs/realtime_voice_snapshot_architecture.md).

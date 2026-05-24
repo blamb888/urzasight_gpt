@@ -8,3 +8,5 @@ fugashi
 unidic-lite
 pyttsx3
 python-multipart
+sounddevice
+websocket-client
