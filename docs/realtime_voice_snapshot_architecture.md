@@ -63,3 +63,7 @@ bash scripts/set_c922_manga_settings.sh /dev/video2
 ## Current Boundary
 
 This prototype intentionally does not send continuous video frames to OpenAI. It sends microphone audio for the voice session and sends a camera image only after a recognized user trigger.
+
+## Troubleshooting
+
+If the API returns `beta_api_shape_disabled`, the client is still using the retired beta Realtime shape. The prototype should connect to `wss://api.openai.com/v1/realtime?model=gpt-realtime` with the standard `Authorization: Bearer ...` header only. Do not send the old `OpenAI-Beta: realtime=v1` header.

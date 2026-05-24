@@ -349,7 +349,6 @@ def configure_session(ws: Any, prompt: str, voice: str, rate: int) -> None:
                 "type": "realtime",
                 "instructions": prompt,
                 "output_modalities": ["audio"],
-                "voice": voice,
                 "audio": {
                     "input": {
                         "format": {"type": "audio/pcm", "rate": rate},
@@ -369,11 +368,77 @@ def configure_session(ws: Any, prompt: str, voice: str, rate: int) -> None:
                             "silence_duration_ms": 700,
                         },
                     },
-                    "output": {"format": {"type": "audio/pcm", "rate": rate}},
+                    "output": {
+                        "format": {"type": "audio/pcm", "rate": rate},
+                        "voice": voice,
+                    },
                 },
             },
         },
     )
+
+
+def realtime_event_loop(
+    websocket: Any,
+    cv2: Any,
+    ws: Any,
+    args: argparse.Namespace,
+    prompt: str,
+    camera_state: CameraState,
+    camera_lock: threading.Lock,
+    stop: threading.Event,
+    audio_queue: "queue.Queue[bytes]",
+) -> None:
+    while not stop.is_set():
+        try:
+            raw = ws.recv()
+        except websocket.WebSocketTimeoutException:
+            continue
+        except websocket.WebSocketConnectionClosedException:
+            print("Realtime connection closed.")
+            stop.set()
+            break
+        except Exception as exc:  # noqa: BLE001
+            print(f"Realtime receive failed: {exc}", file=sys.stderr)
+            stop.set()
+            break
+
+        if not raw:
+            continue
+
+        event = json.loads(raw)
+        event_type = event.get("type")
+
+        if event_type == "error":
+            print(f"Realtime error: {event.get('error')}", file=sys.stderr)
+            stop.set()
+            break
+        if event_type == "conversation.item.input_audio_transcription.completed":
+            transcript = event.get("transcript", "").strip()
+            if not transcript:
+                continue
+            print(f"Heard: {transcript}")
+            command = detect_command(transcript)
+            if command == "repeat":
+                send_repeat(ws)
+            elif command == "snapshot":
+                path = save_current_snapshot(
+                    cv2, camera_state, camera_lock, Path(args.output_dir)
+                )
+                if path:
+                    send_snapshot_question(ws, path, transcript, prompt)
+            else:
+                print("No snapshot trigger detected.")
+        elif event_type == "response.output_audio.delta":
+            delta = event.get("delta")
+            if delta:
+                audio_queue.put(base64.b64decode(delta))
+        elif event_type == "response.output_audio_transcript.delta":
+            delta = event.get("delta")
+            if delta:
+                print(delta, end="", flush=True)
+        elif event_type == "response.output_audio_transcript.done":
+            print()
 
 
 def main() -> int:
@@ -391,13 +456,6 @@ def main() -> int:
     signal.signal(signal.SIGINT, request_stop)
     signal.signal(signal.SIGTERM, request_stop)
 
-    camera_thread = threading.Thread(
-        target=camera_loop,
-        args=(cv2, camera_state, camera_lock, stop, args),
-        daemon=True,
-    )
-    camera_thread.start()
-
     output_thread = threading.Thread(
         target=audio_output_loop,
         args=(sd, stop, audio_queue, args.audio_rate),
@@ -406,6 +464,7 @@ def main() -> int:
     output_thread.start()
 
     input_thread: threading.Thread | None = None
+    realtime_thread: threading.Thread | None = None
     ws = None
 
     try:
@@ -417,7 +476,7 @@ def main() -> int:
         url = f"wss://api.openai.com/v1/realtime?model={args.model}"
         ws = websocket.create_connection(
             url,
-            header=[f"Authorization: Bearer {api_key}", "OpenAI-Beta: realtime=v1"],
+            header=[f"Authorization: Bearer {api_key}"],
             timeout=10,
         )
         ws.settimeout(1)
@@ -434,42 +493,24 @@ def main() -> int:
         print("Say: 'Urzasight', 'what does this mean', or 'explain this'.")
         print("Say: 'repeat' to repeat the last answer. Press Q in preview or Ctrl+C to quit.")
 
-        while not stop.is_set():
-            try:
-                raw = ws.recv()
-            except websocket.WebSocketTimeoutException:
-                continue
-            if not raw:
-                continue
-            event = json.loads(raw)
-            event_type = event.get("type")
+        realtime_thread = threading.Thread(
+            target=realtime_event_loop,
+            args=(
+                websocket,
+                cv2,
+                ws,
+                args,
+                prompt,
+                camera_state,
+                camera_lock,
+                stop,
+                audio_queue,
+            ),
+            daemon=True,
+        )
+        realtime_thread.start()
 
-            if event_type == "error":
-                print(f"Realtime error: {event.get('error')}", file=sys.stderr)
-            elif event_type == "conversation.item.input_audio_transcription.completed":
-                transcript = event.get("transcript", "").strip()
-                if not transcript:
-                    continue
-                print(f"Heard: {transcript}")
-                command = detect_command(transcript)
-                if command == "repeat":
-                    send_repeat(ws)
-                elif command == "snapshot":
-                    path = save_current_snapshot(cv2, camera_state, camera_lock, Path(args.output_dir))
-                    if path:
-                        send_snapshot_question(ws, path, transcript, prompt)
-                else:
-                    print("No snapshot trigger detected.")
-            elif event_type == "response.output_audio.delta":
-                delta = event.get("delta")
-                if delta:
-                    audio_queue.put(base64.b64decode(delta))
-            elif event_type == "response.output_audio_transcript.delta":
-                delta = event.get("delta")
-                if delta:
-                    print(delta, end="", flush=True)
-            elif event_type == "response.output_audio_transcript.done":
-                print()
+        camera_loop(cv2, camera_state, camera_lock, stop, args)
     finally:
         stop.set()
         if ws is not None:
@@ -477,9 +518,10 @@ def main() -> int:
                 ws.close()
             except Exception:
                 pass
-        camera_thread.join(timeout=2)
         if input_thread:
             input_thread.join(timeout=2)
+        if realtime_thread:
+            realtime_thread.join(timeout=2)
         output_thread.join(timeout=2)
 
     return 0
