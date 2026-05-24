@@ -57,8 +57,14 @@ bash scripts/set_c922_manga_settings.sh /dev/video2
 - "Break it down" asks for a natural translation plus brief grammar/vocab explanation.
 - "Reading" asks for kana readings when possible.
 - "Tone" asks for emotional/social tone.
+- "How was that?" evaluates the user's recent reading practice against the current image.
 - "Repeat" repeats the last answer without taking a fresh snapshot.
 - "What does this mean?", "Urzasight, help", and "Explain this" trigger a fresh snapshot.
+- After the first "Urzasight" wake phrase, natural follow-up manga questions can trigger snapshots without repeating the wake word.
+
+If a transcript contains Japanese but no snapshot trigger, the app stores it as possible reading practice instead of treating it as reliable text. The next "How was that?" request uses that recent transcript plus a fresh image, with the image treated as the source of truth.
+
+If a new question arrives while the model is still answering, the app cancels the active response and queues the new request. This avoids `conversation_already_has_active_response` while preserving interrupt-like behavior.
 
 ## Current Boundary
 

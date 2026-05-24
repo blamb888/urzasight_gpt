@@ -27,18 +27,67 @@ TRIGGER_PHRASES = (
     "what does this mean",
     "what's this mean",
     "what does that mean",
+    "what exactly does that mean",
+    "what is this kanji",
+    "what's this kanji",
+    "this kanji",
+    "these two kanji",
     "explain this",
     "explain that",
+    "help me read this",
+    "can you read this",
+    "could you read this",
+    "how do i read this",
+    "could it mean",
+    "how was that",
+    "reading",
+    "tone",
+    "break it down",
+    "quick",
     "help me",
     "help",
 )
+WAKE_PHRASES = ("urzasight",)
 REPEAT_PHRASES = ("repeat", "say that again", "again")
+VISUAL_FOLLOWUP_HINTS = (
+    "this",
+    "that",
+    "kanji",
+    "mean",
+    "read",
+    "passage",
+    "bubble",
+    "panel",
+    "word",
+)
+JAPANESE_CHAR_RANGES = (
+    ("\u3040", "\u309f"),
+    ("\u30a0", "\u30ff"),
+    ("\u3400", "\u4dbf"),
+    ("\u4e00", "\u9fff"),
+)
 
 
 @dataclass
 class CameraState:
     latest_frame: Any | None = None
     latest_path: Path | None = None
+
+
+@dataclass
+class TutorSessionState:
+    active: bool = False
+    response_active: bool = False
+    active_response_id: str | None = None
+    recent_reading: str = ""
+
+
+@dataclass
+class PendingResponse:
+    kind: str
+    transcript: str = ""
+    image_path: Path | None = None
+    recent_reading: str = ""
 
 
 def parse_args() -> argparse.Namespace:
@@ -119,17 +168,39 @@ def snapshot_filename() -> str:
     return f"manga_snapshot_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
 
 
-def detect_command(transcript: str) -> str | None:
+def contains_japanese(text: str) -> bool:
+    return any(start <= char <= end for char in text for start, end in JAPANESE_CHAR_RANGES)
+
+
+def looks_like_visual_followup(transcript: str) -> bool:
+    lowered = transcript.lower()
+    if "?" in lowered:
+        return True
+    return any(hint in lowered for hint in VISUAL_FOLLOWUP_HINTS)
+
+
+def detect_command(transcript: str, session_active: bool) -> str | None:
     lowered = transcript.lower()
     if any(phrase in lowered for phrase in REPEAT_PHRASES):
         return "repeat"
+    if lowered.strip(" .,!?:;") in WAKE_PHRASES:
+        return "wake"
+    if "how was that" in lowered:
+        return "reading_feedback"
     if any(phrase in lowered for phrase in TRIGGER_PHRASES):
+        return "snapshot"
+    if session_active and looks_like_visual_followup(transcript):
         return "snapshot"
     return None
 
 
 def style_hint(transcript: str) -> str:
     lowered = transcript.lower()
+    if "how was that" in lowered:
+        return (
+            "Reading feedback mode: evaluate the user's recent reading gently. "
+            "Use the image as the source of truth."
+        )
     if "quick" in lowered:
         return "Quick mode: give the natural English meaning only."
     if "break it down" in lowered:
@@ -150,8 +221,17 @@ def send_snapshot_question(
     image_path: Path,
     transcript: str,
     instructions: str,
+    recent_reading: str = "",
 ) -> None:
     question = transcript.strip() or "Urzasight, help me understand this manga panel."
+    reading_context = ""
+    if recent_reading:
+        reading_context = (
+            "\nRecent possible reading practice transcript from the user: "
+            f"{recent_reading}\n"
+            "Do not over-trust this transcript if it sounds like broken Japanese. "
+            "Use the image as the source of truth."
+        )
     send_event(
         ws,
         {
@@ -165,6 +245,7 @@ def send_snapshot_question(
                         "text": (
                             f"Spoken user question: {question}\n"
                             f"{style_hint(question)}\n"
+                            f"{reading_context}"
                             "Answer aloud as Urzasight."
                         ),
                     },
@@ -200,6 +281,26 @@ def send_repeat(ws: Any) -> None:
             },
         },
     )
+
+
+def clear_audio_queue(audio_queue: "queue.Queue[bytes]") -> None:
+    while True:
+        try:
+            audio_queue.get_nowait()
+        except queue.Empty:
+            break
+
+
+def cancel_active_response(
+    ws: Any, tutor_state: TutorSessionState, audio_queue: "queue.Queue[bytes]"
+) -> None:
+    if not tutor_state.response_active:
+        return
+    clear_audio_queue(audio_queue)
+    payload: dict[str, Any] = {"type": "response.cancel"}
+    if tutor_state.active_response_id:
+        payload["response_id"] = tutor_state.active_response_id
+    send_event(ws, payload)
 
 
 def camera_loop(
@@ -391,6 +492,31 @@ def realtime_event_loop(
     session_stop: threading.Event,
     audio_queue: "queue.Queue[bytes]",
 ) -> None:
+    tutor_state = TutorSessionState()
+    pending_response: PendingResponse | None = None
+
+    def start_response(request: PendingResponse) -> None:
+        if request.kind == "repeat":
+            send_repeat(ws)
+        elif request.kind == "snapshot" and request.image_path is not None:
+            send_snapshot_question(
+                ws,
+                request.image_path,
+                request.transcript,
+                prompt,
+                request.recent_reading,
+            )
+        tutor_state.response_active = True
+        tutor_state.active_response_id = None
+
+    def start_or_queue_response(request: PendingResponse) -> None:
+        nonlocal pending_response
+        if tutor_state.response_active:
+            pending_response = request
+            cancel_active_response(ws, tutor_state, audio_queue)
+            return
+        start_response(request)
+
     while not app_stop.is_set() and not session_stop.is_set():
         try:
             raw = ws.recv()
@@ -412,26 +538,74 @@ def realtime_event_loop(
         event_type = event.get("type")
 
         if event_type == "error":
-            print(f"Realtime error: {event.get('error')}", file=sys.stderr)
+            error = event.get("error") or {}
+            print(f"Realtime error: {error}", file=sys.stderr)
+            if error.get("code") == "conversation_already_has_active_response":
+                cancel_active_response(ws, tutor_state, audio_queue)
+                continue
             print("Realtime is unavailable; keeping the local camera preview open.")
             session_stop.set()
             break
-        if event_type == "conversation.item.input_audio_transcription.completed":
+        if event_type == "response.created":
+            response = event.get("response") or {}
+            tutor_state.response_active = True
+            tutor_state.active_response_id = response.get("id")
+        elif event_type == "response.done":
+            tutor_state.response_active = False
+            tutor_state.active_response_id = None
+            if pending_response is not None:
+                request = pending_response
+                pending_response = None
+                start_response(request)
+        elif event_type == "conversation.item.input_audio_transcription.completed":
             transcript = event.get("transcript", "").strip()
             if not transcript:
                 continue
             print(f"Heard: {transcript}")
-            command = detect_command(transcript)
-            if command == "repeat":
-                send_repeat(ws)
-            elif command == "snapshot":
+            if any(phrase in transcript.lower() for phrase in WAKE_PHRASES):
+                tutor_state.active = True
+            command = detect_command(transcript, tutor_state.active)
+            if command == "wake":
+                print("Urzasight session is active.")
+            elif command == "repeat":
+                start_or_queue_response(PendingResponse(kind="repeat"))
+            elif command == "reading_feedback":
+                tutor_state.active = True
                 path = save_current_snapshot(
                     cv2, camera_state, camera_lock, Path(args.output_dir)
                 )
                 if path:
-                    send_snapshot_question(ws, path, transcript, prompt)
+                    start_or_queue_response(
+                        PendingResponse(
+                            kind="snapshot",
+                            transcript=transcript,
+                            image_path=path,
+                            recent_reading=tutor_state.recent_reading,
+                        )
+                    )
+            elif command == "snapshot":
+                tutor_state.active = True
+                path = save_current_snapshot(
+                    cv2, camera_state, camera_lock, Path(args.output_dir)
+                )
+                if path:
+                    recent_reading = (
+                        tutor_state.recent_reading if contains_japanese(transcript) else ""
+                    )
+                    start_or_queue_response(
+                        PendingResponse(
+                            kind="snapshot",
+                            transcript=transcript,
+                            image_path=path,
+                            recent_reading=recent_reading,
+                        )
+                    )
             else:
-                print("No snapshot trigger detected.")
+                if contains_japanese(transcript):
+                    tutor_state.recent_reading = transcript
+                    print("Stored possible reading practice transcript.")
+                else:
+                    print("No snapshot trigger detected.")
         elif event_type == "response.output_audio.delta":
             delta = event.get("delta")
             if delta:

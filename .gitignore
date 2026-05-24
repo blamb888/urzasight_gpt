@@ -23,3 +23,4 @@ venv/
 # Local captures / generated files
 captures/
 static/captures/
+transcripts/
