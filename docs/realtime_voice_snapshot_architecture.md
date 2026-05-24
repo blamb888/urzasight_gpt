@@ -39,7 +39,7 @@ bash scripts/set_c922_manga_settings.sh /dev/video2
 
 2. The app opens a local C922 preview window. Frames are not streamed to the API.
 
-3. The app opens an OpenAI Realtime WebSocket session using `prompts/urzasight_tutor.md` as the tutor instructions.
+3. In the background, the app opens an OpenAI Realtime WebSocket session using `prompts/urzasight_tutor.md` as the tutor instructions.
 
 4. Microphone audio from the system default input is streamed to the Realtime session for speech detection/transcription.
 
@@ -67,3 +67,5 @@ This prototype intentionally does not send continuous video frames to OpenAI. It
 ## Troubleshooting
 
 If the API returns `beta_api_shape_disabled`, the client is still using the retired beta Realtime shape. The prototype should connect to `wss://api.openai.com/v1/realtime?model=gpt-realtime` with the standard `Authorization: Bearer ...` header only. Do not send the old `OpenAI-Beta: realtime=v1` header.
+
+If the API returns `insufficient_quota`, the OpenAI project or account needs billing/quota attention before voice answers will work. The local C922 preview should still open because camera preview is independent from Realtime availability.

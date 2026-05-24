@@ -285,14 +285,15 @@ def save_current_snapshot(
 def audio_input_loop(
     sd: Any,
     ws: Any,
-    stop: threading.Event,
+    app_stop: threading.Event,
+    session_stop: threading.Event,
     rate: int,
     block_ms: int,
 ) -> None:
     blocksize = max(1, int(rate * block_ms / 1000))
 
     def callback(indata: bytes, frames: int, time_info: Any, status: Any) -> None:
-        if stop.is_set():
+        if app_stop.is_set() or session_stop.is_set():
             raise sd.CallbackStop
         if status:
             print(f"Audio input status: {status}", file=sys.stderr)
@@ -301,7 +302,7 @@ def audio_input_loop(
             send_event(ws, {"type": "input_audio_buffer.append", "audio": audio_b64})
         except Exception as exc:  # noqa: BLE001
             print(f"Audio send failed: {exc}", file=sys.stderr)
-            stop.set()
+            session_stop.set()
 
     with sd.RawInputStream(
         samplerate=rate,
@@ -310,7 +311,7 @@ def audio_input_loop(
         blocksize=blocksize,
         callback=callback,
     ):
-        while not stop.is_set():
+        while not app_stop.is_set() and not session_stop.is_set():
             time.sleep(0.1)
 
 
@@ -386,21 +387,22 @@ def realtime_event_loop(
     prompt: str,
     camera_state: CameraState,
     camera_lock: threading.Lock,
-    stop: threading.Event,
+    app_stop: threading.Event,
+    session_stop: threading.Event,
     audio_queue: "queue.Queue[bytes]",
 ) -> None:
-    while not stop.is_set():
+    while not app_stop.is_set() and not session_stop.is_set():
         try:
             raw = ws.recv()
         except websocket.WebSocketTimeoutException:
             continue
         except websocket.WebSocketConnectionClosedException:
             print("Realtime connection closed.")
-            stop.set()
+            session_stop.set()
             break
         except Exception as exc:  # noqa: BLE001
             print(f"Realtime receive failed: {exc}", file=sys.stderr)
-            stop.set()
+            session_stop.set()
             break
 
         if not raw:
@@ -411,7 +413,8 @@ def realtime_event_loop(
 
         if event_type == "error":
             print(f"Realtime error: {event.get('error')}", file=sys.stderr)
-            stop.set()
+            print("Realtime is unavailable; keeping the local camera preview open.")
+            session_stop.set()
             break
         if event_type == "conversation.item.input_audio_transcription.completed":
             transcript = event.get("transcript", "").strip()
@@ -441,6 +444,80 @@ def realtime_event_loop(
             print()
 
 
+def realtime_session_loop(
+    websocket: Any,
+    cv2: Any,
+    sd: Any,
+    args: argparse.Namespace,
+    prompt: str,
+    camera_state: CameraState,
+    camera_lock: threading.Lock,
+    app_stop: threading.Event,
+    audio_queue: "queue.Queue[bytes]",
+) -> None:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        print("OPENAI_API_KEY is not set. Local camera preview only.", file=sys.stderr)
+        return
+
+    session_stop = threading.Event()
+    input_thread: threading.Thread | None = None
+    ws = None
+
+    try:
+        url = f"wss://api.openai.com/v1/realtime?model={args.model}"
+        ws = websocket.create_connection(
+            url,
+            header=[f"Authorization: Bearer {api_key}"],
+            timeout=10,
+        )
+        ws.settimeout(1)
+        configure_session(ws, prompt, args.voice, args.audio_rate)
+
+        input_thread = threading.Thread(
+            target=audio_input_loop,
+            args=(
+                sd,
+                ws,
+                app_stop,
+                session_stop,
+                args.audio_rate,
+                args.audio_block_ms,
+            ),
+            daemon=True,
+        )
+        input_thread.start()
+
+        print("Urzasight Realtime connected.")
+        print("Say: 'Urzasight', 'what does this mean', or 'explain this'.")
+        print("Say: 'repeat' to repeat the last answer. Press Q in preview or Ctrl+C to quit.")
+
+        realtime_event_loop(
+            websocket,
+            cv2,
+            ws,
+            args,
+            prompt,
+            camera_state,
+            camera_lock,
+            app_stop,
+            session_stop,
+            audio_queue,
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Realtime startup failed: {exc}", file=sys.stderr)
+        print("Local camera preview is still available.")
+    finally:
+        session_stop.set()
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+        if input_thread:
+            input_thread.join(timeout=2)
+
+
 def main() -> int:
     args = parse_args()
     cv2, sd, websocket = import_dependencies()
@@ -463,42 +540,15 @@ def main() -> int:
     )
     output_thread.start()
 
-    input_thread: threading.Thread | None = None
     realtime_thread: threading.Thread | None = None
-    ws = None
 
     try:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            print("OPENAI_API_KEY is not set.", file=sys.stderr)
-            return 1
-
-        url = f"wss://api.openai.com/v1/realtime?model={args.model}"
-        ws = websocket.create_connection(
-            url,
-            header=[f"Authorization: Bearer {api_key}"],
-            timeout=10,
-        )
-        ws.settimeout(1)
-        configure_session(ws, prompt, args.voice, args.audio_rate)
-
-        input_thread = threading.Thread(
-            target=audio_input_loop,
-            args=(sd, ws, stop, args.audio_rate, args.audio_block_ms),
-            daemon=True,
-        )
-        input_thread.start()
-
-        print("Urzasight Realtime connected.")
-        print("Say: 'Urzasight', 'what does this mean', or 'explain this'.")
-        print("Say: 'repeat' to repeat the last answer. Press Q in preview or Ctrl+C to quit.")
-
         realtime_thread = threading.Thread(
-            target=realtime_event_loop,
+            target=realtime_session_loop,
             args=(
                 websocket,
                 cv2,
-                ws,
+                sd,
                 args,
                 prompt,
                 camera_state,
@@ -510,16 +560,11 @@ def main() -> int:
         )
         realtime_thread.start()
 
+        print("Opening local C922 preview. Frames are not streamed to the API.")
+        print("Press Q or Esc in the preview window to quit.")
         camera_loop(cv2, camera_state, camera_lock, stop, args)
     finally:
         stop.set()
-        if ws is not None:
-            try:
-                ws.close()
-            except Exception:
-                pass
-        if input_thread:
-            input_thread.join(timeout=2)
         if realtime_thread:
             realtime_thread.join(timeout=2)
         output_thread.join(timeout=2)
