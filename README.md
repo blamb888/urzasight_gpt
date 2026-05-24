@@ -76,3 +76,36 @@ python3 scripts/capture_frame.py --device /dev/video0
 ```
 
 Captured frames are saved under `captures/`, which is ignored by Git.
+
+## C922 Fallback Camera Testing
+
+For the Logitech C922 fallback prototype, use `/dev/video2` unless `scripts/list_cameras.sh` shows a different capture node. The preferred setup is tripod-mounted and forward-facing, with the reader holding the manga naturally at reading distance. This better matches the eventual glasses-camera use case than a top-down desk scan.
+
+Current best baseline:
+
+- MJPG 1920x1080 at 30fps
+- `focus_absolute=60`
+- `sharpness=180`
+- `power_line_frequency=1` for Tokyo/Japan East 50Hz lighting
+
+Focus values `40` and `60` were the best early candidates from the sweep, with `60` currently preferred.
+
+Apply repeatable manga-oriented camera settings:
+
+```bash
+bash scripts/set_c922_manga_settings.sh /dev/video2
+```
+
+Preview at the preferred mode:
+
+```bash
+bash scripts/preview_camera.sh /dev/video2 1920x1080 mjpeg 30
+```
+
+Capture a manual focus sweep for comparison:
+
+```bash
+bash scripts/c922_focus_sweep.sh /dev/video2
+```
+
+See [docs/c922_camera_test_notes.md](docs/c922_camera_test_notes.md) for the full C922 testing procedure and manga capture tips.

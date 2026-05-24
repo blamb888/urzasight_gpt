@@ -20,6 +20,7 @@ def parse_args() -> argparse.Namespace:
         default="MJPG",
         help="Requested fourcc pixel format, for example MJPG or YUYV.",
     )
+    parser.add_argument("--fps", type=float, default=0, help="Optional requested FPS.")
     parser.add_argument(
         "--warmup-frames",
         type=int,
@@ -61,10 +62,17 @@ def main() -> int:
         return 1
 
     if args.format:
-        fourcc = cv2.VideoWriter_fourcc(*args.format[:4].upper())
+        format_code = args.format[:4].upper()
+        if len(format_code) != 4:
+            print(f"Pixel format must be a four-character code: {args.format}")
+            cap.release()
+            return 1
+        fourcc = cv2.VideoWriter_fourcc(*format_code)
         cap.set(cv2.CAP_PROP_FOURCC, fourcc)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, args.width)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, args.height)
+    if args.fps > 0:
+        cap.set(cv2.CAP_PROP_FPS, args.fps)
 
     ok = False
     frame = None
@@ -73,6 +81,7 @@ def main() -> int:
 
     actual_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     actual_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    actual_fps = cap.get(cv2.CAP_PROP_FPS)
     cap.release()
 
     if not ok or frame is None:
@@ -88,7 +97,9 @@ def main() -> int:
 
     print(f"Saved: {output_path}")
     print(f"Requested: {args.width}x{args.height} {args.format.upper()}")
-    print(f"Actual: {actual_width}x{actual_height}")
+    if args.fps > 0:
+        print(f"Requested FPS: {args.fps:g}")
+    print(f"Actual: {actual_width}x{actual_height} @ {actual_fps:g}fps")
     return 0
 
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DEVICE="${1:-/dev/video0}"
-SIZE="${2:-1920x1080}"
+DEVICE="${1:-/dev/video2}"
+RESOLUTION="${2:-1920x1080}"
 FORMAT="${3:-mjpeg}"
 FPS="${4:-30}"
 
@@ -23,5 +23,5 @@ exec ffplay \
   -f v4l2 \
   -input_format "$FORMAT" \
   -framerate "$FPS" \
-  -video_size "$SIZE" \
+  -video_size "$RESOLUTION" \
   "$DEVICE"
